@@ -6,6 +6,7 @@ import json
 import re
 import asyncio
 from dotenv import load_dotenv
+import urllib.parse
 
 load_dotenv()
 
@@ -19,25 +20,19 @@ blocked_mentions = [r'@everyone', r'@here']
 
 async def generate_ai_response(message):
     print(f"Generating AI response for message: {message.content}")
+    encoded_prompt = urllib.parse.quote(message.content)
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(
-                'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
-                headers={'Content-Type': 'application/json'},
-                params={'key': os.getenv('GEMINI_API_KEY')},
-                json={
-                    'contents': [{'parts': [{'text': message.content}]}],
-                    'generationConfig': {'maxOutputTokens': 200}
-                }
+            async with session.get(
+                f'https://text.pollinations.ai/{encoded_prompt}'
             ) as response:
-                print(f"Gemini API response status: {response.status}")
+                print(f"Pollinations API response status: {response.status}")
                 if response.status == 200:
-                    data = await response.json()
-                    print(f"Gemini API response: {data}")
-                    response_text = data['candidates'][0]['content']['parts'][0]['text']
+                    response_text = await response.text()
+                    print(f"Pollinations API response: {response_text}")
                     for pattern in blocked_mentions:
                         response_text = re.sub(pattern, '[REDACTED]', response_text, flags=re.IGNORECASE)
-                    return response_text
+                    return response_text[:200] if len(response_text) > 200 else response_text
                 return f"API error: Status {response.status}"
         except Exception as e:
             print(f"AI response error: {str(e)}")
@@ -46,6 +41,7 @@ async def generate_ai_response(message):
 @bot.event
 async def on_ready():
     print(f'Bot is ready as {bot.user}')
+    await bot.tree.sync()
 
 @bot.event
 async def on_message(message):
@@ -69,21 +65,21 @@ async def on_message(message):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def initiate(ctx):
-    print(f"Received h!initiate in channel {ctx.channel.id} by {ctx.author}")
+    print(f"Received p!initiate in channel {ctx.channel.id} by {ctx.author}")
     if ctx.channel.id not in active_channels:
         active_channels.add(ctx.channel.id)
-        await ctx.send("HavenAI is now active in this channel!")
+        await ctx.send("HavenBot AI is now active in this channel!")
     else:
-        await ctx.send("HavenAI is already active here!")
+        await ctx.send("HavenBot AI is already active here!")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def stop(ctx):
     if ctx.channel.id in active_channels:
         active_channels.remove(ctx.channel.id)
-        await ctx.send("HavenAI is now disabled in this channel!")
+        await ctx.send("HavenBot AI is now disabled in this channel!")
     else:
-        await ctx.send("HavenAI is not active in this channel!")
+        await ctx.send("HavenBot AI is not active in this channel!")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -164,6 +160,22 @@ async def unlock(ctx, *, reason=None):
     overwrite.send_messages = None
     await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
     await ctx.send(f"Channel unlocked. Reason: {reason or 'None'}")
+
+@bot.tree.command(name="command", description="List all available commands")
+async def command(interaction: discord.Interaction):
+    embed = discord.Embed(title="HavenBot Commands", color=discord.Color.blue())
+    embed.add_field(name="p!initiate", value="Activates AI chat in the channel (Admin only).", inline=False)
+    embed.add_field(name="p!stop", value="Disables AI chat in the channel (Admin only).", inline=False)
+    embed.add_field(name="p!ban @user [reason]", value="Bans a user (Admin only).", inline=False)
+    embed.add_field(name="p!unban user_id [reason]", value="Unbans a user by ID (Admin only).", inline=False)
+    embed.add_field(name="p!kick @user [reason]", value="Kicks a user (Admin only).", inline=False)
+    embed.add_field(name="p!mute @user [reason]", value="Mutes a user (Admin only).", inline=False)
+    embed.add_field(name="p!unmute @user [reason]", value="Unmutes a user (Admin only).", inline=False)
+    embed.add_field(name="p!purge amount", value="Deletes up to 100 messages (Admin only).", inline=False)
+    embed.add_field(name="p!lock [reason]", value="Locks the channel (Admin only).", inline=False)
+    embed.add_field(name="p!unlock [reason]", value="Unlocks the channel (Admin only).", inline=False)
+    embed.add_field(name="/command", value="Shows this command list.", inline=False)
+    await interaction.response.send_message(embed=embed)
 
 @bot.event
 async def on_command_error(ctx, error):
