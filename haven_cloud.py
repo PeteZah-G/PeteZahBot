@@ -7,20 +7,27 @@ import re
 import asyncio
 from dotenv import load_dotenv
 import urllib.parse
+from collections import deque
 
 load_dotenv()
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix='h!', intents=intents)
+bot = commands.Bot(command_prefix='p!', intents=intents)
 
 active_channels = set()
 blocked_mentions = [r'@everyone', r'@here']
+message_history = {}
 
 async def generate_ai_response(message):
     print(f"Generating AI response for message: {message.content}")
-    encoded_prompt = urllib.parse.quote(message.content)
+    channel_id = message.channel.id
+    if channel_id not in message_history:
+        message_history[channel_id] = deque(maxlen=7)
+    message_history[channel_id].append({"role": "user", "content": message.content})
+    prompt = "\n".join([f"{msg['role']}: {msg['content']}" for msg in message_history[channel_id]])
+    encoded_prompt = urllib.parse.quote(prompt)
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(
@@ -32,7 +39,7 @@ async def generate_ai_response(message):
                     print(f"Pollinations API response: {response_text}")
                     for pattern in blocked_mentions:
                         response_text = re.sub(pattern, '[REDACTED]', response_text, flags=re.IGNORECASE)
-                    return response_text[:200] if len(response_text) > 200 else response_text
+                    return response_text[:2000] if len(response_text) > 2000 else response_text
                 return f"API error: Status {response.status}"
         except Exception as e:
             print(f"AI response error: {str(e)}")
@@ -59,27 +66,30 @@ async def on_message(message):
 
     await asyncio.sleep(1)
     ai_response = await generate_ai_response(message)
+    message_history[message.channel.id].append({"role": "assistant", "content": ai_response})
     await message.channel.send(ai_response)
     await bot.process_commands(message)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def initiate(ctx):
-    print(f"Received h!initiate in channel {ctx.channel.id} by {ctx.author}")
+    print(f"Received p!initiate in channel {ctx.channel.id} by {ctx.author}")
     if ctx.channel.id not in active_channels:
         active_channels.add(ctx.channel.id)
-        await ctx.send("HavenBot AI is now active in this channel!")
+        await ctx.send("PeteZahBot AI is now active in this channel!")
     else:
-        await ctx.send("HavenBot AI is already active here!")
+        await ctx.send("PeteZahBot AI is already active here!")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def stop(ctx):
     if ctx.channel.id in active_channels:
         active_channels.remove(ctx.channel.id)
-        await ctx.send("HavenBot AI is now disabled in this channel!")
+        if ctx.channel.id in message_history:
+            del message_history[ctx.channel.id]
+        await ctx.send("PeteZahBot AI is now disabled in this channel!")
     else:
-        await ctx.send("HavenBot AI is not active in this channel!")
+        await ctx.send("PeteZahBot AI is not active in this channel!")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -163,17 +173,17 @@ async def unlock(ctx, *, reason=None):
 
 @bot.tree.command(name="command", description="List all available commands")
 async def command(interaction: discord.Interaction):
-    embed = discord.Embed(title="HavenBot Commands", color=discord.Color.blue())
-    embed.add_field(name="h!initiate", value="Activates AI chat in the channel (Admin only).", inline=False)
-    embed.add_field(name="h!stop", value="Disables AI chat in the channel (Admin only).", inline=False)
-    embed.add_field(name="h!ban @user [reason]", value="Bans a user (Admin only).", inline=False)
-    embed.add_field(name="h!unban user_id [reason]", value="Unbans a user by ID (Admin only).", inline=False)
-    embed.add_field(name="h!kick @user [reason]", value="Kicks a user (Admin only).", inline=False)
-    embed.add_field(name="h!mute @user [reason]", value="Mutes a user (Admin only).", inline=False)
-    embed.add_field(name="h!unmute @user [reason]", value="Unmutes a user (Admin only).", inline=False)
-    embed.add_field(name="h!purge amount", value="Deletes up to 100 messages (Admin only).", inline=False)
-    embed.add_field(name="h!lock [reason]", value="Locks the channel (Admin only).", inline=False)
-    embed.add_field(name="h!unlock [reason]", value="Unlocks the channel (Admin only).", inline=False)
+    embed = discord.Embed(title="PeteZahBot Commands", color=discord.Color.blue())
+    embed.add_field(name="p!initiate", value="Activates AI chat in the channel (Admin only).", inline=False)
+    embed.add_field(name="p!stop", value="Disables AI chat in the channel (Admin only).", inline=False)
+    embed.add_field(name="p!ban @user [reason]", value="Bans a user (Admin only).", inline=False)
+    embed.add_field(name="p!unban user_id [reason]", value="Unbans a user by ID (Admin only).", inline=False)
+    embed.add_field(name="p!kick @user [reason]", value="Kicks a user (Admin only).", inline=False)
+    embed.add_field(name="p!mute @user [reason]", value="Mutes a user (Admin only).", inline=False)
+    embed.add_field(name="p!unmute @user [reason]", value="Unmutes a user (Admin only).", inline=False)
+    embed.add_field(name="p!purge amount", value="Deletes up to 100 messages (Admin only).", inline=False)
+    embed.add_field(name="p!lock [reason]", value="Locks the channel (Admin only).", inline=False)
+    embed.add_field(name="p!unlock [reason]", value="Unlocks the channel (Admin only).", inline=False)
     embed.add_field(name="/command", value="Shows this command list.", inline=False)
     await interaction.response.send_message(embed=embed)
 
