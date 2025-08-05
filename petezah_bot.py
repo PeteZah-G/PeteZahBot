@@ -16,6 +16,7 @@ load_dotenv()
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.moderation = True
 bot = commands.Bot(command_prefix='p!', intents=intents)
 
 active_channels = set()
@@ -88,9 +89,13 @@ def is_superuser_or_admin():
 def is_superuser_admin_or_mod():
     def predicate(ctx):
         mod_role = discord.utils.get(ctx.guild.roles, name=MOD_ROLE_NAME)
+        has_mod_perms = (mod_role and mod_role in ctx.author.roles and
+                        (ctx.author.guild_permissions.manage_messages or
+                         ctx.author.guild_permissions.kick_members or
+                         ctx.author.guild_permissions.moderate_members))
         return (ctx.author.id == SUPERUSER_ID or 
                 ctx.author.guild_permissions.administrator or 
-                (mod_role and mod_role in ctx.author.roles))
+                has_mod_perms)
     return commands.check(predicate)
 
 @bot.event
@@ -384,7 +389,7 @@ async def slowmode(ctx, seconds: int):
     if seconds < 0 or seconds > 21600:
         await ctx.send("Slowmode must be between 0 and 21600 seconds.")
         return
-    await ctx.channelmediatimeoutchannel.edit(slowmode_delay=seconds)
+    await ctx.channel.edit(slowmode_delay=seconds)
     await ctx.send(f"Slowmode set to {seconds} seconds.")
 
 @bot.command()
@@ -406,7 +411,7 @@ async def afkstop(ctx):
         await ctx.send("You are not AFK.")
 
 @bot.command()
-async def generateimage(ctx, *, prompt):
+async def gen(ctx, *, prompt):
     image_data = await generate_image(prompt)
     if image_data:
         await ctx.send(file=discord.File(image_data, "generated_image.png"))
@@ -463,6 +468,21 @@ async def unpin(ctx):
                 pass
         del pinned_messages[ctx.channel.id]
         await ctx.send("Pinned message removed.")
+    else:
+        await ctx.send("No message is pinned in this channel.")
+
+@bot.command()
+async def pinstop(ctx):
+    if ctx.channel.id in pinned_messages:
+        last_message_id = pinned_messages[ctx.channel.id].get('last_message_id')
+        if last_message_id:
+            try:
+                last_message = await ctx.channel.fetch_message(last_message_id)
+                await last_message.delete()
+            except:
+                pass
+        del pinned_messages[ctx.channel.id]
+        await ctx.send("Pinned message stopped.")
     else:
         await ctx.send("No message is pinned in this channel.")
 
@@ -534,11 +554,12 @@ async def list_commands(interaction: discord.Interaction):
     embed2.add_field(name="p!invite", value="Creates a server invite link.", inline=False)
     embed2.add_field(name="p!afk [reason]", value="Sets AFK status with optional reason.", inline=False)
     embed2.add_field(name="p!afkstop", value="Removes AFK status.", inline=False)
-    embed2.add_field(name="p!generateimage prompt", value="Generates an image from a prompt.", inline=False)
+    embed2.add_field(name="p!gen prompt", value="Generates an image from a prompt.", inline=False)
     embed2.add_field(name="p!nickname @user [nick]", value="Sets or clears a user's nickname (Admin only).", inline=False)
     embed2.add_field(name="p!roleinfo @role", value="Shows role info.", inline=False)
     embed2.add_field(name="p!pin message", value="Sets a message to be posted after every message in the channel.", inline=False)
     embed2.add_field(name="p!unpin", value="Removes the pinned message from the channel.", inline=False)
+    embed2.add_field(name="p!pinstop", value="Stops the pinned message from being posted.", inline=False)
     embed2.add_field(name="p!say message", value="Sends a message as the bot (Admin only).", inline=False)
     embed2.add_field(name="p!embed message", value="Sends an embedded message (Admin only).", inline=False)
     embed2.add_field(name="p!reactionrole message_id @role emoji", value="Sets a reaction role (Admin only).", inline=False)
@@ -558,7 +579,7 @@ async def enable_mod_perms(interaction: discord.Interaction, role: discord.Role)
     permissions = discord.Permissions(
         manage_messages=True,
         kick_members=True,
-        mute_members=True
+        moderate_members=True
     )
     await role.edit(permissions=permissions, reason="Enabled moderator permissions")
     global MOD_ROLE_NAME
