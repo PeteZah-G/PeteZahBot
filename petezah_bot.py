@@ -32,6 +32,9 @@ warnings = {}
 afk_users = {}
 pinned_messages = {}
 locked_channels = set()
+welcome_channels = {}
+security_channels = set()
+security_servers = set()
 SUPERUSER_ID = 1311722282317779097
 MOD_ROLE_NAME = "Moderator"
 
@@ -78,18 +81,36 @@ async def generate_image(prompt):
             logging.error(f"Image generation error: {str(e)}")
             return None
 
-async def notify_user(member, action, reason=None):
+async def notify_user(member, action, reason=None, duration=None):
     try:
         embed = discord.Embed(title=f"You have been {action}", color=discord.Color.red())
         embed.add_field(name="Server", value=member.guild.name, inline=False)
         if reason:
             embed.add_field(name="Reason", value=reason, inline=False)
+        if duration:
+            embed.add_field(name="Duration", value=duration, inline=False)
         embed.set_footer(text=f"Action taken at {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
         await member.send(embed=embed)
         return True
     except Exception as e:
         logging.error(f"Failed to notify user {member.id}: {str(e)}")
         return False
+
+def parse_duration(duration_str):
+    if not duration_str:
+        return None, None
+    duration_str = duration_str.lower().strip()
+    match = re.match(r'^(\d+)(s|m|h|d)?$', duration_str)
+    if not match:
+        return None, "Invalid duration format. Use <number><unit> (e.g., 5d, 10m, 2h, 30s)."
+    amount, unit = match.groups()
+    amount = int(amount)
+    if unit is None:
+        unit = 'm'
+    units = {'s': ('seconds', amount), 'm': ('minutes', amount), 'h': ('hours', amount), 'd': ('days', amount)}
+    unit_name, seconds = units[unit]
+    seconds = amount * {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[unit]
+    return seconds, f"{amount} {unit_name}"
 
 def is_superuser_or_admin():
     def predicate(ctx):
@@ -129,6 +150,17 @@ async def on_message(message):
         logging.info(f"Ignoring message in disabled channel {message.channel.id}")
         return
 
+    if (message.channel.id in security_channels or message.guild.id in security_servers) and not message.author.bot:
+        invite_pattern = r'(discord\.gg|discord\.com/invite|\.gg)/[a-zA-Z0-9]+'
+        if re.search(invite_pattern, message.content, re.IGNORECASE):
+            try:
+                await message.delete()
+                await message.author.timeout(datetime.timedelta(minutes=1), reason="Posted a Discord invite link")
+                await notify_user(message.author, "timed out", "Posted a Discord invite link", "1 minute")
+                await message.channel.send(f"{message.author.mention} has been timed out for 1 minute for posting a Discord invite link.", delete_after=5)
+            except Exception as e:
+                logging.error(f"Error handling invite link: {str(e)}")
+
     if message.channel.id not in active_channels:
         logging.info(f"Ignoring message from {message.author} in channel {message.channel.id} (not active)")
         if message.channel.id in pinned_messages and not message.content.startswith('p!'):
@@ -144,7 +176,7 @@ async def on_message(message):
             try:
                 new_message = await message.channel.send(pinned_messages[message.channel.id]['content'])
                 pinned_messages[message.channel.id]['last_message_id'] = new_message.id
-            except ExceptioncesaException as e:
+            except Exception as e:
                 logging.error(f"Error sending pinned message: {str(e)}")
         await bot.process_commands(message)
         return
@@ -185,6 +217,16 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+@bot.event
+async def on_member_join(member):
+    try:
+        for channel_id, message in welcome_channels.items():
+            channel = member.guild.get_channel(channel_id)
+            if channel:
+                await channel.send(f"Welcome {member.mention} to {member.guild.name}. {message}")
+    except Exception as e:
+        logging.error(f"Error in on_member_join: {str(e)}")
+
 @bot.command()
 @is_superuser_or_admin()
 async def initiate(ctx):
@@ -222,7 +264,7 @@ async def stop(ctx):
 
 @bot.command()
 @is_superuser_or_admin()
-async def ban(ctx, member: discord.Member, *, reason=None):
+async def ban(ctx, member: discord.Member, duration: str = None, *, reason=None):
     if ctx.channel.id in disabled_channels:
         await ctx.send("This channel is disabled for bot commands.")
         return
@@ -233,9 +275,22 @@ async def ban(ctx, member: discord.Member, *, reason=None):
         if member == ctx.author or member == ctx.guild.me:
             await ctx.send("You can't ban yourself or the bot!")
             return
-        notified = await notify_user(member, "banned", reason)
+        duration_seconds, duration_text = parse_duration(duration)
+        if duration_seconds is None and duration_text:
+            await ctx.send(duration_text)
+            return
+        notified = await notify_user(member, "banned", reason, duration_text)
         await member.ban(reason=reason)
-        await ctx.send(f"{member.mention} has been banned{' and DM\'d' if notified else ''}. Reason: {reason or 'None'}")
+        await ctx.send(f"{member.mention} has been banned{' and DM\'d' if notified else ''}.{' Duration: ' + duration_text if duration_text else ''} Reason: {reason or 'None'}")
+        if duration_seconds:
+            await asyncio.sleep(duration_seconds)
+            try:
+                await ctx.guild.unban(member, reason="Temporary ban duration expired")
+                await notify_user(member, "unbanned", "Temporary ban duration expired")
+            except discord.NotFound:
+                logging.info(f"User {member.id} not found for unban, possibly already unbanned")
+            except Exception as e:
+                logging.error(f"Error in auto-unban: {str(e)}")
     except Exception as e:
         logging.error(f"Error in ban command: {str(e)}")
         await ctx.send("An error occurred while banning the user.")
@@ -278,7 +333,7 @@ async def kick(ctx, member: discord.Member, *, reason=None):
 
 @bot.command()
 @is_superuser_admin_or_mod()
-async def mute(ctx, member: discord.Member, *, reason=None):
+async def mute(ctx, member: discord.Member, duration: str = None, *, reason=None):
     if ctx.channel.id in disabled_channels:
         await ctx.send("This channel is disabled for bot commands.")
         return
@@ -294,9 +349,23 @@ async def mute(ctx, member: discord.Member, *, reason=None):
             mute_role = await ctx.guild.create_role(name="Muted")
             for channel in ctx.guild.channels:
                 await channel.set_permissions(mute_role, send_messages=False)
-        notified = await notify_user(member, "muted", reason)
+        duration_seconds, duration_text = parse_duration(duration)
+        if duration_seconds is None and duration_text:
+            await ctx.send(duration_text)
+            return
+        notified = await notify_user(member, "muted", reason, duration_text)
         await member.add_roles(mute_role, reason=reason)
-        await ctx.send(f"{member.mention} has been muted{' and DM\'d' if notified else ''}. Reason: {reason or 'None'}")
+        await ctx.send(f"{member.mention} has been muted{' and DM\'d' if notified else ''}.{' Duration: ' + duration_text if duration_text else ''} Reason: {reason or 'None'}")
+        if duration_seconds:
+            await asyncio.sleep(duration_seconds)
+            try:
+                if mute_role in member.roles:
+                    await member.remove_roles(mute_role, reason="Temporary mute duration expired")
+                    await notify_user(member, "unmuted", "Temporary mute duration expired")
+            except discord.NotFound:
+                logging.info(f"User {member.id} not found for unmute, possibly left server")
+            except Exception as e:
+                logging.error(f"Error in auto-unmute: {str(e)}")
     except Exception as e:
         logging.error(f"Error in mute command: {str(e)}")
         await ctx.send("An error occurred while muting the user.")
@@ -612,6 +681,17 @@ async def invite(ctx):
         await ctx.send("An error occurred while creating the invite.")
 
 @bot.command()
+async def botinvite(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
+    try:
+        await ctx.send("https://discord.com/oauth2/authorize?client_id=1401297926143086774&permissions=8&integration_type=0&scope=bot+applications.commands")
+    except Exception as e:
+        logging.error(f"Error in botinvite command: {str(e)}")
+        await ctx.send("An error occurred while sending the bot invite link.")
+
+@bot.command()
 async def afk(ctx, *, reason="AFK"):
     if ctx.channel.id in disabled_channels:
         await ctx.send("This channel is disabled for bot commands.")
@@ -825,6 +905,105 @@ async def reactionrole(ctx, message_id: int, role: discord.Role, emoji):
         logging.error(f"Error in reactionrole command: {str(e)}")
         await ctx.send("An error occurred while setting the reaction role.")
 
+@bot.tree.command(name="welcome_messages", description="Sets a welcome message for new members in this channel (Admin only)")
+async def welcome_messages(interaction: discord.Interaction, message: str):
+    try:
+        if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
+            return
+        if interaction.channel.id in disabled_channels:
+            await interaction.response.send_message("This channel is disabled for bot commands.", ephemeral=True)
+            return
+        welcome_channels[interaction.channel.id] = message
+        await interaction.response.send_message(f"Welcome message set for this channel: {message}", ephemeral=False)
+    except Exception as e:
+        logging.error(f"Error in welcome_messages: {str(e)}")
+        await interaction.response.send_message("An error occurred while setting the welcome message.", ephemeral=True)
+
+@bot.tree.command(name="welcome_messages_stop", description="Stops welcome messages in this channel (Admin only)")
+async def welcome_messages_stop(interaction: discord.Interaction):
+    try:
+        if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
+            return
+        if interaction.channel.id in disabled_channels:
+            await interaction.response.send_message("This channel is disabled for bot commands.", ephemeral=True)
+            return
+        if interaction.channel.id in welcome_channels:
+            del welcome_channels[interaction.channel.id]
+            await interaction.response.send_message("Welcome messages stopped in this channel.", ephemeral=False)
+        else:
+            await interaction.response.send_message("No welcome message is set in this channel.", ephemeral=False)
+    except Exception as e:
+        logging.error(f"Error in welcome_messages_stop: {str(e)}")
+        await interaction.response.send_message("An error occurred while stopping the welcome message.", ephemeral=True)
+
+@bot.tree.command(name="enable_security_channel", description="Enables invite link security in this channel (Admin only)")
+async def enable_security_channel(interaction: discord.Interaction):
+    try:
+        if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
+            return
+        if interaction.channel.id in disabled_channels:
+            await interaction.response.send_message("This channel is disabled for bot commands.", ephemeral=True)
+            return
+        if interaction.channel.id not in security_channels:
+            security_channels.add(interaction.channel.id)
+            await interaction.response.send_message("Invite link security enabled in this channel. Users posting invite links will be timed out for 1 minute.", ephemeral=False)
+        else:
+            await interaction.response.send_message("Invite link security is already enabled in this channel!", ephemeral=False)
+    except Exception as e:
+        logging.error(f"Error in enable_security_channel: {str(e)}")
+        await interaction.response.send_message("An error occurred while enabling security in this channel.", ephemeral=True)
+
+@bot.tree.command(name="disable_security_channel", description="Disables invite link security in this channel (Admin only)")
+async def disable_security_channel(interaction: discord.Interaction):
+    try:
+        if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
+            return
+        if interaction.channel.id in disabled_channels:
+            await interaction.response.send_message("This channel is disabled for bot commands.", ephemeral=True)
+            return
+        if interaction.channel.id in security_channels:
+            security_channels.remove(interaction.channel.id)
+            await interaction.response.send_message("Invite link security disabled in this channel.", ephemeral=False)
+        else:
+            await interaction.response.send_message("Invite link security is not enabled in this channel.", ephemeral=False)
+    except Exception as e:
+        logging.error(f"Error in disable_security_channel: {str(e)}")
+        await interaction.response.send_message("An error occurred while disabling security in this channel.", ephemeral=True)
+
+@bot.tree.command(name="enable_security_server", description="Enables invite link security in all channels of the server (Admin only)")
+async def enable_security_server(interaction: discord.Interaction):
+    try:
+        if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
+            return
+        if interaction.guild.id not in security_servers:
+            security_servers.add(interaction.guild.id)
+            await interaction.response.send_message("Invite link security enabled for the entire server. Users posting invite links will be timed out for 1 minute.", ephemeral=False)
+        else:
+            await interaction.response.send_message("Invite link security is already enabled for the server!", ephemeral=False)
+    except Exception as e:
+        logging.error(f"Error in enable_security_server: {str(e)}")
+        await interaction.response.send_message("An error occurred while enabling server-wide security.", ephemeral=True)
+
+@bot.tree.command(name="disable_security_server", description="Disables invite link security in all channels of the server (Admin only)")
+async def disable_security_server(interaction: discord.Interaction):
+    try:
+        if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
+            return
+        if interaction.guild.id in security_servers:
+            security_servers.remove(interaction.guild.id)
+            await interaction.response.send_message("Invite link security disabled for the entire server.", ephemeral=False)
+        else:
+            await interaction.response.send_message("Invite link security is not enabled for the server.", ephemeral=False)
+    except Exception as e:
+        logging.error(f"Error in disable_security_server: {str(e)}")
+        await interaction.response.send_message("An error occurred while disabling server-wide security.", ephemeral=True)
+
 @bot.tree.command(name="command", description="List all available commands")
 async def list_commands(interaction: discord.Interaction):
     try:
@@ -832,10 +1011,10 @@ async def list_commands(interaction: discord.Interaction):
         embed1 = discord.Embed(title="PeteZahBot Commands (1/2)", color=discord.Color.blue())
         embed1.add_field(name="p!initiate", value="Activates AI chat in the channel (Admin only).", inline=False)
         embed1.add_field(name="p!stop", value="Disables AI chat in the channel (Admin only).", inline=False)
-        embed1.add_field(name="p!ban @user [reason]", value="Bans a user (Admin only).", inline=False)
+        embed1.add_field(name="p!ban @user [duration] [reason]", value="Bans a user, optional duration (e.g., 5d, 10m, 2h, 30s) (Admin only).", inline=False)
         embed1.add_field(name="p!unban user_id [reason]", value="Unbans a user by ID (Admin only).", inline=False)
         embed1.add_field(name="p!kick @user [reason]", value="Kicks a user (Admin/Mod).", inline=False)
-        embed1.add_field(name="p!mute @user [reason]", value="Mutes a user (Admin/Mod).", inline=False)
+        embed1.add_field(name="p!mute @user [duration] [reason]", value="Mutes a user, optional duration (e.g., 5d, 10m, 2h, 30s) (Admin/Mod).", inline=False)
         embed1.add_field(name="p!unmute @user [reason]", value="Unmutes a user (Admin only).", inline=False)
         embed1.add_field(name="p!purge amount", value="Deletes up to 100 messages (Admin/Mod).", inline=False)
         embed1.add_field(name="p!lock [reason]", value="Locks the channel, only superuser can send messages (Admin only).", inline=False)
@@ -855,6 +1034,7 @@ async def list_commands(interaction: discord.Interaction):
         embed2.add_field(name="p!avatar [@user]", value="Shows user avatar (defaults to self).", inline=False)
         embed2.add_field(name="p!slowmode seconds", value="Sets channel slowmode (Admin only).", inline=False)
         embed2.add_field(name="p!invite", value="Creates a server invite link.", inline=False)
+        embed2.add_field(name="p!botinvite", value="Provides the bot's invite link.", inline=False)
         embed2.add_field(name="p!afk [reason]", value="Sets AFK status with optional reason.", inline=False)
         embed2.add_field(name="p!afkstop", value="Removes AFK status.", inline=False)
         embed2.add_field(name="p!generateimage prompt", value="Generates an image from a prompt.", inline=False)
@@ -867,6 +1047,12 @@ async def list_commands(interaction: discord.Interaction):
         embed2.add_field(name="p!embed message", value="Sends an embedded message (Admin only).", inline=False)
         embed2.add_field(name="p!reactionrole message_id @role emoji", value="Sets a reaction role (Admin only).", inline=False)
         embed2.add_field(name="/command", value="Shows this command list.", inline=False)
+        embed2.add_field(name="/welcome_messages message", value="Sets a welcome message for new members in the channel (Admin only).", inline=False)
+        embed2.add_field(name="/welcome_messages_stop", value="Stops welcome messages in the channel (Admin only).", inline=False)
+        embed2.add_field(name="/enable_security_channel", value="Enables invite link security in the channel (Admin only).", inline=False)
+        embed2.add_field(name="/disable_security_channel", value="Disables invite link security in the channel (Admin only).", inline=False)
+        embed2.add_field(name="/enable_security_server", value="Enables invite link security in all channels (Admin only).", inline=False)
+        embed2.add_field(name="/disable_security_server", value="Disables invite link security in all channels (Admin only).", inline=False)
         embed2.add_field(name="/stopchannel", value="Completely disables the bot in this channel (Admin only).", inline=False)
         embed2.add_field(name="/reenablechannel", value="Re-enables the bot in this channel (Admin only).", inline=False)
         embeds.append(embed2)
@@ -963,6 +1149,10 @@ async def stopchannel(interaction: discord.Interaction):
                     except Exception as e:
                         logging.error(f"Error deleting pinned message: {str(e)}")
                 del pinned_messages[interaction.channel.id]
+            if interaction.channel.id in welcome_channels:
+                del welcome_channels[interaction.channel.id]
+            if interaction.channel.id in security_channels:
+                security_channels.remove(interaction.channel.id)
             await interaction.response.send_message("PeteZahBot is now completely disabled in this channel!", ephemeral=False)
         else:
             await interaction.response.send_message("PeteZahBot is already disabled in this channel!", ephemeral=False)
