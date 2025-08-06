@@ -12,7 +12,6 @@ import datetime
 import io
 import logging
 
-# Set up logging
 logging.basicConfig(filename='bot.log', level=logging.INFO, 
                    format='%(asctime)s:%(levelname)s:%(message)s')
 
@@ -26,6 +25,7 @@ intents.guilds = True
 bot = commands.Bot(command_prefix='p!', intents=intents)
 
 active_channels = set()
+disabled_channels = set()
 blocked_mentions = [r'@everyone', r'@here']
 message_history = {}
 warnings = {}
@@ -125,6 +125,10 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
+    if message.channel.id in disabled_channels:
+        logging.info(f"Ignoring message in disabled channel {message.channel.id}")
+        return
+
     if message.channel.id not in active_channels:
         logging.info(f"Ignoring message from {message.author} in channel {message.channel.id} (not active)")
         if message.channel.id in pinned_messages and not message.content.startswith('p!'):
@@ -140,7 +144,7 @@ async def on_message(message):
             try:
                 new_message = await message.channel.send(pinned_messages[message.channel.id]['content'])
                 pinned_messages[message.channel.id]['last_message_id'] = new_message.id
-            except Exception as e:
+            except ExceptioncesaException as e:
                 logging.error(f"Error sending pinned message: {str(e)}")
         await bot.process_commands(message)
         return
@@ -184,6 +188,9 @@ async def on_message(message):
 @bot.command()
 @is_superuser_or_admin()
 async def initiate(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     logging.info(f"Received p!initiate in channel {ctx.channel.id} by {ctx.author}")
     try:
         if ctx.channel.id not in active_channels:
@@ -198,6 +205,9 @@ async def initiate(ctx):
 @bot.command()
 @is_superuser_or_admin()
 async def stop(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.channel.id in active_channels:
             active_channels.remove(ctx.channel.id)
@@ -213,6 +223,9 @@ async def stop(ctx):
 @bot.command()
 @is_superuser_or_admin()
 async def ban(ctx, member: discord.Member, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if member.id == SUPERUSER_ID:
             await ctx.send("This user is immune to bans!")
@@ -230,6 +243,9 @@ async def ban(ctx, member: discord.Member, *, reason=None):
 @bot.command()
 @is_superuser_or_admin()
 async def unban(ctx, user_id: int, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         user = await bot.fetch_user(user_id)
         await ctx.guild.unban(user, reason=reason)
@@ -243,6 +259,9 @@ async def unban(ctx, user_id: int, *, reason=None):
 @bot.command()
 @is_superuser_admin_or_mod()
 async def kick(ctx, member: discord.Member, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if member.id == SUPERUSER_ID:
             await ctx.send("This user is immune to kicks!")
@@ -260,6 +279,9 @@ async def kick(ctx, member: discord.Member, *, reason=None):
 @bot.command()
 @is_superuser_admin_or_mod()
 async def mute(ctx, member: discord.Member, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if member.id == SUPERUSER_ID:
             await ctx.send("This user is immune to mutes!")
@@ -282,6 +304,9 @@ async def mute(ctx, member: discord.Member, *, reason=None):
 @bot.command()
 @is_superuser_or_admin()
 async def unmute(ctx, member: discord.Member, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if member == ctx.author or member == ctx.guild.me:
             await ctx.send("You can't unmute yourself or the bot!")
@@ -300,6 +325,9 @@ async def unmute(ctx, member: discord.Member, *, reason=None):
 @bot.command()
 @is_superuser_admin_or_mod()
 async def purge(ctx, amount: int):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if amount < 1 or amount > 100:
             await ctx.send("Please specify a number between 1 and 100.")
@@ -313,6 +341,9 @@ async def purge(ctx, amount: int):
 @bot.command()
 @is_superuser_or_admin()
 async def lock(ctx, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.channel.id in locked_channels:
             await ctx.send("Channel is already locked!")
@@ -332,6 +363,9 @@ async def lock(ctx, *, reason=None):
 @bot.command()
 @is_superuser_or_admin()
 async def unlock(ctx, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.channel.id not in locked_channels:
             await ctx.send("Channel is not locked!")
@@ -351,6 +385,9 @@ async def unlock(ctx, *, reason=None):
 @bot.command()
 @is_superuser_or_admin()
 async def petezah(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.author.id != SUPERUSER_ID:
             await ctx.send("Only the superuser can use this command!")
@@ -370,6 +407,9 @@ async def petezah(ctx):
 
 @bot.command()
 async def ping(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         latency = round(bot.latency * 1000)
         await ctx.send(f"Pong! Latency: {latency}ms")
@@ -379,6 +419,9 @@ async def ping(ctx):
 
 @bot.command()
 async def userinfo(ctx, member: discord.Member = None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         member = member or ctx.author
         embed = discord.Embed(title=f"User Info - {member}", color=discord.Color.blue())
@@ -400,6 +443,9 @@ async def userinfo(ctx, member: discord.Member = None):
 
 @bot.command()
 async def serverinfo(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         guild = ctx.guild
         embed = discord.Embed(title=f"Server Info - {guild.name}", color=discord.Color.blue())
@@ -421,6 +467,9 @@ async def serverinfo(ctx):
 @bot.command()
 @is_superuser_admin_or_mod()
 async def clearwarnings(ctx, member: discord.Member):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.guild.id in warnings and member.id in warnings[ctx.guild.id]:
             del warnings[ctx.guild.id][member.id]
@@ -434,6 +483,9 @@ async def clearwarnings(ctx, member: discord.Member):
 @bot.command()
 @is_superuser_admin_or_mod()
 async def warn(ctx, member: discord.Member, *, reason=None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if member.id == SUPERUSER_ID:
             await ctx.send("This user is immune to warnings!")
@@ -455,6 +507,9 @@ async def warn(ctx, member: discord.Member, *, reason=None):
 
 @bot.command()
 async def warns(ctx, member: discord.Member = None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         member = member or ctx.author
         guild_id = ctx.guild.id
@@ -472,6 +527,9 @@ async def warns(ctx, member: discord.Member = None):
 @bot.command()
 @is_superuser_or_admin()
 async def role(ctx, action: str, member: discord.Member, role: discord.Role):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if action.lower() not in ["add", "remove"]:
             await ctx.send("Action must be 'add' or 'remove'.")
@@ -494,6 +552,9 @@ async def role(ctx, action: str, member: discord.Member, role: discord.Role):
 
 @bot.command()
 async def poll(ctx, question: str, *options: str):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if not options or len(options) > 10:
             await ctx.send("Please provide 1-10 options for the poll.")
@@ -510,6 +571,9 @@ async def poll(ctx, question: str, *options: str):
 
 @bot.command()
 async def avatar(ctx, member: discord.Member = None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         member = member or ctx.author
         embed = discord.Embed(title=f"{member}'s Avatar", color=discord.Color.blue())
@@ -522,6 +586,9 @@ async def avatar(ctx, member: discord.Member = None):
 @bot.command()
 @is_superuser_or_admin()
 async def slowmode(ctx, seconds: int):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if seconds < 0 or seconds > 21600:
             await ctx.send("Slowmode must be between 0 and 21600 seconds.")
@@ -534,6 +601,9 @@ async def slowmode(ctx, seconds: int):
 
 @bot.command()
 async def invite(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         invite = await ctx.channel.create_invite(max_age=86400, max_uses=0, temporary=False)
         await ctx.send(f"Invite link: {invite.url}")
@@ -543,6 +613,9 @@ async def invite(ctx):
 
 @bot.command()
 async def afk(ctx, *, reason="AFK"):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         afk_users[ctx.author.id] = reason
         await ctx.send(f"{ctx.author.mention} is now AFK: {reason}")
@@ -552,6 +625,9 @@ async def afk(ctx, *, reason="AFK"):
 
 @bot.command()
 async def afkstop(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.author.id in afk_users:
             del afk_users[ctx.author.id]
@@ -564,6 +640,9 @@ async def afkstop(ctx):
 
 @bot.command()
 async def generateimage(ctx, *, prompt):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         image_data = await generate_image(prompt)
         if image_data:
@@ -577,6 +656,9 @@ async def generateimage(ctx, *, prompt):
 @bot.command()
 @is_superuser_or_admin()
 async def nickname(ctx, member: discord.Member, *, nick: str = None):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if member.id == SUPERUSER_ID:
             await ctx.send("This user is immune to nickname changes!")
@@ -589,6 +671,9 @@ async def nickname(ctx, member: discord.Member, *, nick: str = None):
 
 @bot.command()
 async def roleinfo(ctx, role: discord.Role):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         embed = discord.Embed(title=f"Role Info - {role.name}", color=role.color)
         embed.add_field(name="ID", value=role.id, inline=True)
@@ -605,6 +690,9 @@ async def roleinfo(ctx, role: discord.Role):
 @bot.command()
 @is_superuser_or_admin()
 async def pin(ctx, *, content: str):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if not content:
             await ctx.send("Please provide a message to pin.")
@@ -633,6 +721,9 @@ async def pin(ctx, *, content: str):
 
 @bot.command()
 async def unpin(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.channel.id in pinned_messages:
             last_message_id = pinned_messages[ctx.channel.id].get('last_message_id')
@@ -654,6 +745,9 @@ async def unpin(ctx):
 
 @bot.command()
 async def pinstop(ctx):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if ctx.channel.id in pinned_messages:
             last_message_id = pinned_messages[ctx.channel.id].get('last_message_id')
@@ -676,6 +770,9 @@ async def pinstop(ctx):
 @bot.command()
 @is_superuser_or_admin()
 async def say(ctx, *, message):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         await ctx.send(message)
         await ctx.message.delete()
@@ -686,6 +783,9 @@ async def say(ctx, *, message):
 @bot.command()
 @is_superuser_or_admin()
 async def embed(ctx, *, message):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         embed = discord.Embed(description=message, color=discord.Color.blue())
         await ctx.send(embed=embed)
@@ -697,6 +797,9 @@ async def embed(ctx, *, message):
 @bot.command()
 @is_superuser_or_admin()
 async def reactionrole(ctx, message_id: int, role: discord.Role, emoji):
+    if ctx.channel.id in disabled_channels:
+        await ctx.send("This channel is disabled for bot commands.")
+        return
     try:
         if role >= ctx.guild.me.top_role:
             await ctx.send("I can't manage a role higher than or equal to my own!")
@@ -764,7 +867,7 @@ async def list_commands(interaction: discord.Interaction):
         embed2.add_field(name="p!embed message", value="Sends an embedded message (Admin only).", inline=False)
         embed2.add_field(name="p!reactionrole message_id @role emoji", value="Sets a reaction role (Admin only).", inline=False)
         embed2.add_field(name="/command", value="Shows this command list.", inline=False)
-        embed2.add_field(name="/stopchannel", value="Stops the bot in this channel (Admin only).", inline=False)
+        embed2.add_field(name="/stopchannel", value="Completely disables the bot in this channel (Admin only).", inline=False)
         embed2.add_field(name="/reenablechannel", value="Re-enables the bot in this channel (Admin only).", inline=False)
         embeds.append(embed2)
 
@@ -837,19 +940,32 @@ async def enable_admin_perms(interaction: discord.Interaction, role: discord.Rol
         logging.error(f"Error in enable_admin_perms: {str(e)}")
         await interaction.response.send_message("An error occurred while granting administrator permissions.", ephemeral=True)
 
-@bot.tree.command(name="stopchannel", description="Stops the bot from working in this channel (Admin only)")
+@bot.tree.command(name="stopchannel", description="Completely disables the bot in this channel (Admin only)")
 async def stopchannel(interaction: discord.Interaction):
     try:
         if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
             return
-        if interaction.channel.id in active_channels:
-            active_channels.remove(interaction.channel.id)
+        if interaction.channel.id not in disabled_channels:
+            disabled_channels.add(interaction.channel.id)
+            if interaction.channel.id in active_channels:
+                active_channels.remove(interaction.channel.id)
             if interaction.channel.id in message_history:
                 del message_history[interaction.channel.id]
-            await interaction.response.send_message("PeteZahBot AI is now disabled in this channel!", ephemeral=False)
+            if interaction.channel.id in pinned_messages:
+                last_message_id = pinned_messages[interaction.channel.id].get('last_message_id')
+                if last_message_id:
+                    try:
+                        last_message = await interaction.channel.fetch_message(last_message_id)
+                        await last_message.delete()
+                    except discord.NotFound:
+                        logging.warning(f"Pinned message {last_message_id} not found, skipping deletion")
+                    except Exception as e:
+                        logging.error(f"Error deleting pinned message: {str(e)}")
+                del pinned_messages[interaction.channel.id]
+            await interaction.response.send_message("PeteZahBot is now completely disabled in this channel!", ephemeral=False)
         else:
-            await interaction.response.send_message("PeteZahBot AI is already disabled in this channel!", ephemeral=False)
+            await interaction.response.send_message("PeteZahBot is already disabled in this channel!", ephemeral=False)
     except Exception as e:
         logging.error(f"Error in stopchannel: {str(e)}")
         await interaction.response.send_message("An error occurred while disabling the bot in this channel.", ephemeral=True)
@@ -860,17 +976,19 @@ async def reenablechannel(interaction: discord.Interaction):
         if interaction.user.id != SUPERUSER_ID and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("You need administrator permissions to use this command!", ephemeral=True)
             return
-        if interaction.channel.id not in active_channels:
-            active_channels.add(interaction.channel.id)
-            await interaction.response.send_message("PeteZahBot AI is now re-enabled in this channel!", ephemeral=False)
+        if interaction.channel.id in disabled_channels:
+            disabled_channels.remove(interaction.channel.id)
+            await interaction.response.send_message("PeteZahBot is now re-enabled in this channel!", ephemeral=False)
         else:
-            await interaction.response.send_message("PeteZahBot AI is already enabled in this channel!", ephemeral=False)
+            await interaction.response.send_message("PeteZahBot is already enabled in this channel!", ephemeral=False)
     except Exception as e:
         logging.error(f"Error in reenablechannel: {str(e)}")
         await interaction.response.send_message("An error occurred while re-enabling the bot in this channel.", ephemeral=True)
 
 @bot.event
 async def on_command_error(ctx, error):
+    if ctx.channel.id in disabled_channels:
+        return
     try:
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("You need administrator permissions to use this command!")
